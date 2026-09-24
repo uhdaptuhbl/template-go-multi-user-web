@@ -1,0 +1,25 @@
+.git/
+.github/
+.worktrees/
+bin/
+coverage.out
+
+# GoReleaser's output. It holds a built binary per platform and would
+# otherwise be uploaded to the daemon on every local build. The release image
+# does not read it from here: GoReleaser hands buildx its own context.
+/dist/
+
+# Local secrets. .env is gitignored, so it reaches the build context only on a
+# developer's machine, which is exactly where a real credential would be.
+.env
+.env.*
+!.env.example
+node_modules/
+deploy/
+docs/
+specs/
+*.md
+!README.md
+.golangci.yaml
+Dockerfile
+.dockerignore

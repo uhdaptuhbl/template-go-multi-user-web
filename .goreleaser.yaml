@@ -1,0 +1,146 @@
+# Release configuration. See specs/004-release-automation/ for why each piece is
+# here, and docs/adr/0009-build-and-release-tooling.md for the tooling choice.
+#
+# Rehearse before tagging: go tool mage snapshot
+# Validate this file:      go tool mage releasecheck
+
+version: 2
+
+project_name: service
+
+before:
+  hooks:
+    # A release must not be the moment the module graph turns out to be stale.
+    - go mod tidy
+
+builds:
+  - id: service
+    main: ./cmd/service
+    binary: service
+
+    # CGO off so the result runs on the distroless static base, which has no
+    # libc. This mirrors the Dockerfile's builder stage.
+    env:
+      - CGO_ENABLED=0
+
+    # Linux only: docs/adr/0007 fixes the deployment topology as a container
+    # behind a reverse proxy, so another GOOS would produce an artifact with no
+    # consumer.
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+    flags:
+      - -trimpath
+
+    # The same three variables magefile.go stamps, so a released binary reports
+    # its identity exactly as a locally built one does. See AC-003.2 and
+    # AC-004.4. commit is the short hash, matching internal/buildinfo's godoc.
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.buildDate={{ .Date }}
+
+    # Reproducibility: without this the binary carries the build's wall clock,
+    # so two builds of one commit differ.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# Nothing is uploaded to the release (see release.skip_upload below), but the
+# archive pipe still has to produce something for the release pipe to consider.
+# binary means no tarball is assembled on the way to being discarded.
+archives:
+  - formats:
+      - binary
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  # Read from the git log rather than the GitHub API, so the notes are
+  # reproducible from a clone and do not depend on API availability.
+  use: git
+  sort: asc
+
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Performance
+      regexp: '^.*?perf(\(.+\))??!?:.+$'
+      order: 2
+    - title: Refactors
+      regexp: '^.*?refactor(\(.+\))??!?:.+$'
+      order: 3
+    - title: Build and dependencies
+      regexp: '^.*?build(\(.+\))??!?:.+$'
+      order: 4
+    - title: Documentation
+      regexp: '^.*?docs(\(.+\))??!?:.+$'
+      order: 5
+    - title: Other
+      order: 99
+
+  filters:
+    exclude:
+      - '^test:'
+      - '^test\('
+      - '^chore:'
+      - '^chore\('
+      - Merge pull request
+      - Merge branch
+
+release:
+  # The release exists for its notes, not for its attachments: the artifact
+  # people consume is the image on GHCR, and a loose binary beside it is a
+  # second thing to keep signed and a second thing to get stale. See the
+  # non-goals in specs/004-release-automation/requirements.md.
+  skip_upload: true
+
+dockers_v2:
+  - id: image
+    images:
+      # Owner and name follow the module path. A project bootstrapped from this
+      # repository must rewrite both.
+      - ghcr.io/uhdaptuhbl/service
+
+    # Assembly only: the context GoReleaser hands to buildx already holds the
+    # compiled binary for each platform, so this Dockerfile compiles nothing.
+    # The self-contained build stays in ./Dockerfile for local use.
+    dockerfile: Dockerfile.release
+
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
+    # Full version, then the moving tags an operator pins against by policy.
+    tags:
+      - "{{ .Version }}"
+      - "{{ .Major }}.{{ .Minor }}"
+      - "{{ .Major }}"
+      - latest
+
+    annotations:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.source: https://github.com/uhdaptuhbl/template-go-multi-user-web
+      org.opencontainers.image.licenses: Apache-2.0
+
+docker_signs:
+  # Keyless: the signing identity is the workflow's OIDC token, so there is no
+  # private key to store, rotate, or leak. Verification is therefore against
+  # the workflow identity rather than against a public key. The exact command
+  # an operator runs is in README.md.
+  - id: keyless
+    cmd: cosign
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - --yes
+    # Print cosign's output into the workflow log. A signature that silently
+    # did not happen is the failure worth making loud.
+    output: true

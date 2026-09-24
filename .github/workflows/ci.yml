@@ -1,0 +1,232 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Callable, so the release workflow runs these exact jobs on a tag instead of
+  # keeping a second copy of the same commands that can drift from these.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The linter version is pinned by the tool directive in go.mod, so this
+      # job runs exactly what a contributor's `go tool mage lint` runs, and a
+      # version bump is one Dependabot pull request rather than an edit here
+      # and another in every developer's PATH. The target also lints the
+      # integration suite, which its build tag excludes from the default run.
+      - name: golangci-lint
+        run: go tool mage lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: service
+          POSTGRES_PASSWORD: service
+          POSTGRES_DB: service_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U service -d service_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Unit tests
+        run: go test -race ./...
+      - name: Integration tests
+        run: go test -race -tags=integration ./...
+        env:
+          SERVICE_TEST_DB_DSN: postgres://service:service@127.0.0.1:5432/service_test?sslmode=disable
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go tool mage build
+
+  tidy:
+    name: Tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go mod tidy is a no-op
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  vuln:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Through the mage target, for the same reason the lint job uses one:
+      # the version is pinned by the tool directive in go.mod, so this runs
+      # exactly what a contributor's `go tool mage vuln` runs.
+      - name: govulncheck
+        run: go tool mage vuln
+
+  # The container criteria in specs/003-build-and-release were verified only
+  # by commands written into tasks.md for a human to run. Nobody ran them, and
+  # two of the three did not test what they claimed. This job is the citation
+  # now, under the artifact-criterion exception in CLAUDE.md.
+  container:
+    name: Container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build the image
+        run: docker build -t service:ci .
+
+      # AC-003.4
+      - name: Image runs as a non-root user
+        run: |
+          user="$(docker inspect service:ci --format '{{.Config.User}}')"
+          if [ "$user" != "nonroot:nonroot" ]; then
+            echo "image user is '$user', want 'nonroot:nonroot'" >&2
+            exit 1
+          fi
+
+      # AC-003.4. The entrypoint override is what makes this a real check:
+      # without it, `sh -c true` is passed to the binary as arguments, which
+      # it ignores before starting the server, so the command succeeds
+      # whether or not the image has a shell.
+      - name: Image contains no shell
+        run: |
+          if docker run --rm --entrypoint sh service:ci -c true >/dev/null 2>&1; then
+            echo "a shell is present in the image" >&2
+            exit 1
+          fi
+
+      # The cleanup step below runs "if: always()", which covers a failure and
+      # an ordinary cancellation but not a runner that is killed outright. On a
+      # self-hosted runner the container then outlives the job and the next run
+      # fails at "docker run" on the name rather than on anything it tests.
+      # Removing a container that is normally absent costs nothing and keeps
+      # that failure from being attributed to the change under test.
+      - name: Remove containers a killed run may have left behind
+        run: docker rm -f service-ci service-ci-admin >/dev/null 2>&1 || true
+
+      # AC-003.7, both halves: the application listener answers on :8080 with
+      # nothing configured, and the administrative listener is bound to
+      # loopback inside the container, so publishing its port is not enough to
+      # reach it.
+      - name: Serves :8080 and keeps the admin port unreachable, with no environment set
+        run: |
+          docker run -d --name service-ci -p 8080:8080 -p 9090:9090 service:ci
+
+          ready=""
+          for _ in $(seq 1 50); do
+            if curl -sf --max-time 2 http://127.0.0.1:8080/healthz >/dev/null; then
+              ready=yes
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ -z "$ready" ]; then
+            echo "application listener never answered on :8080" >&2
+            docker logs service-ci >&2
+            exit 1
+          fi
+
+          if curl -sf --max-time 2 http://127.0.0.1:9090/healthz >/dev/null; then
+            echo "administrative listener is reachable from outside the container" >&2
+            exit 1
+          fi
+
+      # The other half of the same default: bound to loopback, not disabled.
+      # Told to bind an interface, it serves the operational endpoints.
+      - name: Serves the administrative endpoints when told to bind them
+        run: |
+          docker run -d --name service-ci-admin -p 9091:9090 \
+            -e SERVICE_ADMIN_ADDR=:9090 service:ci
+
+          ready=""
+          for _ in $(seq 1 50); do
+            if curl -sf --max-time 2 http://127.0.0.1:9091/healthz >/dev/null; then
+              ready=yes
+              break
+            fi
+            sleep 0.2
+          done
+
+          if [ -z "$ready" ]; then
+            echo "administrative listener never answered" >&2
+            docker logs service-ci-admin >&2
+            exit 1
+          fi
+
+          for path in /readyz /version /metrics; do
+            if ! curl -sf --max-time 2 "http://127.0.0.1:9091$path" >/dev/null; then
+              echo "administrative endpoint $path did not answer" >&2
+              exit 1
+            fi
+          done
+
+      - name: Collect logs and remove the containers
+        if: always()
+        run: |
+          for name in service-ci service-ci-admin; do
+            if docker container inspect "$name" >/dev/null 2>&1; then
+              docker logs "$name" || true
+              docker rm -f "$name" >/dev/null || true
+            fi
+          done
+
+  release-config:
+    name: Release config
+    runs-on: ubuntu-latest
+    steps:
+      # No fetch-depth: check parses the configuration and reads the remote
+      # URL, but computes nothing from history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Validating here means a .goreleaser.yaml that no longer parses fails on
+      # the pull request that broke it, rather than on the next version tag
+      # when someone is trying to ship.
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: "~> v2"
+          args: check

@@ -1,0 +1,856 @@
+version: "2"
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+run:
+  timeout: 5m
+
+  # If invoked with -mod=readonly, the go command is disallowed from the
+  # implicit automatic updating of go.mod. Instead, it fails when any changes
+  # to go.mod are needed. This setting is most useful to check that go.mod
+  # does not need updates, such as in a continuous integration and testing
+  # system. If invoked with -mod=vendor, the go command assumes that the
+  # vendor directory holds the correct copies of dependencies and ignores
+  # the dependency descriptions in go.mod.
+  #
+  # Allowed values: readonly|vendor|mod
+  modules-download-mode: readonly
+
+  # magefile.go carries //go:build mage so that it is excluded from ordinary
+  # builds. Without the tag here it would also be excluded from linting, and
+  # the build targets would be the one piece of Go in the repository that no
+  # linter ever reads. The depguard rule named `magefile` below scopes the mage
+  # library to that one file.
+  build-tags:
+    - mage
+
+# ---------------------------------------------------------------------------
+# Issues
+# ---------------------------------------------------------------------------
+issues:
+  # Unlimited output — never silently truncate findings in CI.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+# ---------------------------------------------------------------------------
+# Formatters
+# ---------------------------------------------------------------------------
+formatters:
+  enable:
+    # goimports handles everything gofmt does (indentation, brace style,
+    # spacing) and additionally manages import grouping and removes unused
+    # imports. No need to enable gofmt separately.
+    - goimports
+
+  settings:
+    goimports:
+      # Produces the canonical three-group import layout:
+      #   1. stdlib
+      #   2. third-party
+      #   3. this project
+      local-prefixes:
+        - github.com/uhdaptuhbl
+
+  exclusions:
+    generated: lax
+
+# ---------------------------------------------------------------------------
+# Linters
+# ---------------------------------------------------------------------------
+linters:
+  # Explicit opt-in — no linter runs unless listed here. This makes the
+  # config fully self-documenting: every linter that executes has a name
+  # and a comment explaining why.
+  default: none
+
+  enable:
+    # -----------------------------------------------------------------------
+    # Core correctness (replaces the "standard" preset)
+    # -----------------------------------------------------------------------
+
+    # go vet: suspicious constructs, printf format mismatches, struct copies.
+    - govet
+
+    # The most powerful static analyzer for Go — ~150 checks covering
+    # deprecated API usage, unreachable code, incorrect sync usage, and more.
+    - staticcheck
+
+    # Unchecked error return values — the most common source of silent
+    # failures in Go.
+    - errcheck
+
+    # Assignments to variables whose value is never subsequently read.
+    - ineffassign
+
+    # Unused constants, variables, functions, and types across the package graph.
+    - unused
+
+    # -----------------------------------------------------------------------
+    # Error-handling correctness
+    # -----------------------------------------------------------------------
+
+    # Catches %v instead of %w in fmt.Errorf, and == comparisons on errors
+    # instead of errors.Is/errors.As. Wrapping with %w is required so callers
+    # can use errors.Is/errors.As against the cause.
+    - errorlint
+
+    # Returns nil even when the error variable is non-nil.
+    - nilerr
+
+    # Extends nilerr — catches functions that check err != nil but return a
+    # different nil-valued error (e.g. a typed nil interface).
+    - nilnesserr
+
+    # Simultaneous return of (nil, nil) when the first value is an interface
+    # or pointer — callers cannot distinguish success from absence.
+    - nilnil
+
+    # Sentinel errors must be named ErrFoo; error types must end in Error.
+    - errname
+
+    # Flags struct types passed to json.Marshal whose fields can never produce
+    # a marshal error — the returned error check is always misleading.
+    - errchkjson
+
+    # Requires errors from external packages to be wrapped before returning,
+    # so a failure surfaces with the operation that caused it. Expect this to
+    # get noisier as third-party clients are added; revisit then rather than
+    # pre-emptively loosening it.
+    - wrapcheck
+
+    # -----------------------------------------------------------------------
+    # Bug detection
+    # -----------------------------------------------------------------------
+
+    # HTTP response body not closed after reading — causes connection pool
+    # exhaustion and goroutine leaks.
+    - bodyclose
+
+    # time.Duration x time.Duration multiplication — almost always a bug
+    # (e.g. 5 * time.Second * time.Millisecond).
+    - durationcheck
+
+    # Unguarded type assertions x.(T) — enforces the comma-ok pattern.
+    - forcetypeassert
+
+    # make([]T, n) followed by append — almost always means make([]T, 0, n).
+    - makezero
+
+    # []any passed as any in a variadic ...any parameter — e.g.
+    # fn(slice) instead of fn(slice...). Silent correctness bug at call sites.
+    - asasalint
+
+    # http.Get / http.Post etc. called without a context.
+    - noctx
+
+    # Non-canonical HTTP header names ("content-type" instead of "Content-Type").
+    # net/http header lookups are case-insensitive but canonical form is required
+    # for correct behaviour with some proxies and HTTP/2 pseudo-headers.
+    - canonicalheader
+
+    # Package-level variables reassigned outside their declaring package.
+    - reassign
+
+    # Context passed to a function that does not derive from the caller's
+    # context — catches accidental context.Background() use in middleware.
+    - contextcheck
+
+    # context.WithValue called inside a loop — the context grows on every
+    # iteration and is never released.
+    - fatcontext
+
+    # context.Context stored as a struct field. A stored context outlives the
+    # call it belongs to, so cancellation and deadlines stop working.
+    - containedctx
+
+    # -----------------------------------------------------------------------
+    # Code style & quality
+    # -----------------------------------------------------------------------
+
+    # Fast, configurable drop-in for golint — naming, doc comments, error
+    # return ordering, blank imports, and many more (see rules below).
+    - revive
+
+    # Large collection of diagnostic, style, and performance checks.
+    - gocritic
+
+    # Cyclomatic complexity per function. Limit is 15, set in settings below.
+    - gocyclo
+
+    # Deeply nested if statements — complements gocyclo on the nesting-depth
+    # axis rather than the branch-count axis (default threshold: 5).
+    - nestif
+
+    # Duplicate words in comments and strings ("the the").
+    - dupword
+
+    # Commonly misspelled English words in comments, strings, identifiers.
+    - misspell
+
+    # Unnecessary blank lines at the start/end of functions, if, for, etc.
+    - whitespace
+
+    # Unnecessary type conversions — int(myInt) when myInt is already int.
+    - unconvert
+
+    # Identifiers shadowing Go built-ins: len, cap, new, close, error, ...
+    - predeclared
+
+    # Repeated string literals (>=3 chars, >=3 occurrences) that should be
+    # extracted to a named constant.
+    - goconst
+
+    # Bare (naked) return statements — flagged unconditionally regardless of
+    # function length.
+    - nakedret
+
+    # printf-like function names must end in 'f' (Logf, Errorf, etc.).
+    - goprintffuncname
+
+    # Ill-formed, unexplained, or unused //nolint directives. A suppression
+    # must name its linter and say why, so it can be re-evaluated later.
+    - nolintlint
+
+    # Struct tag naming conventions. Case rules are in settings below.
+    - tagliatelle
+
+    # Methods on the same type must consistently use pointer or value receivers.
+    - recvcheck
+
+    # Interface method parameters must be named for readability.
+    - inamedparam
+
+    # -----------------------------------------------------------------------
+    # Marshaling
+    # -----------------------------------------------------------------------
+
+    # Structs passed to marshal/unmarshal functions must carry the required
+    # struct tags, so a field is not silently dropped from the wire format.
+    - musttag
+
+    # -----------------------------------------------------------------------
+    # Testing
+    # -----------------------------------------------------------------------
+
+    # Test helper functions must call t.Helper() as their first statement.
+    - thelper
+
+    # os.MkdirTemp -> t.TempDir(), os.Setenv -> t.Setenv(), etc. in test files.
+    #
+    # Its context-background and context-todo checks stay at their default,
+    # off. Every context.Background() in the tests is inside a t.Cleanup
+    # function (17 of them, as of 2026-09-24): t.Context() is already
+    # cancelled by the time cleanup runs, so a shutdown or rollback there
+    # needs a context that is not. The check cannot tell those apart from a
+    # real miss, and CLAUDE.md's rule to pass t.Context() is caught in review.
+    - usetesting
+
+    # -----------------------------------------------------------------------
+    # Performance & modern Go
+    # -----------------------------------------------------------------------
+
+    # Suggests modern Go idioms: min/max builtins, slices.*, maps.*,
+    # range-over-int, etc. Highly relevant on Go 1.27.
+    - modernize
+
+    # for i := 0; i < n; i++ -> for i := range n.
+    - intrange
+
+    # Loop variables captured by reference into closures.
+    - copyloopvar
+
+    # Slice declarations that grow via append in a loop where the length is
+    # knowable upfront — suggests make([]T, 0, n).
+    - prealloc
+
+    # fmt.Sprintf replaceable with faster strconv / concat alternatives.
+    - perfsprint
+
+    # bytes/strings mirror function misuse — avoids unnecessary allocations.
+    - mirror
+
+    # golang.org/x/exp functions superseded by stdlib equivalents.
+    - exptostd
+
+    # -----------------------------------------------------------------------
+    # Logging & output discipline
+    # -----------------------------------------------------------------------
+
+    # Forbids fmt.Print* and the builtin print/println, which write straight to
+    # stdout/stderr and bypass the zap logger. fmt.Errorf, fmt.Sprintf, and
+    # fmt.Fprintf to an explicit writer are unaffected and remain required
+    # elsewhere in these standards.
+    - forbidigo
+
+    # -----------------------------------------------------------------------
+    # Security
+    # -----------------------------------------------------------------------
+
+    # Source code security checks: hardcoded credentials, weak crypto,
+    # unsafe exec usage, file permission issues, and ~40 more rules.
+    # Some high-noise rules are excluded below (G104, G115, G404, G304).
+    - gosec
+
+    # Unicode bidirectional control characters embedded in source — defends
+    # against the "Trojan Source" attack (CVE-2021-42574). Zero false positives.
+    - bidichk
+
+    # New dependencies must be intentional and added here.
+    - depguard
+
+    # -----------------------------------------------------------------------
+    # Additional quality checks
+    # -----------------------------------------------------------------------
+
+    # String literals that should be stdlib constants: "GET" -> http.MethodGet,
+    # "200" -> http.StatusOK, "application/json" -> http.DetectContentType, etc.
+    - usestdlibvars
+
+    # Function parameters always called with the same value — signals the
+    # parameter could be removed or hardcoded.
+    - unparam
+
+    # fmt.Sprintf("%s:%d", host, port) -> net.JoinHostPort (handles IPv6).
+    - nosprintfhostport
+
+    # Validates //go: compiler directives are correctly formed — malformed
+    # ones are silently ignored by the compiler.
+    - gocheckcompilerdirectives
+
+    # switch statements over iota enum types must handle every value.
+    - exhaustive
+
+    # Interfaces exceeding the configured method count are flagged.
+    - interfacebloat
+
+    # All named return values are flagged, including in defer functions.
+    - nonamedreturns
+
+    # Functions returning interfaces must use an allowed type.
+    - ireturn
+
+  # -------------------------------------------------------------------------
+  # Linter settings
+  # -------------------------------------------------------------------------
+  settings:
+    depguard:
+      # Rules to apply.
+      #
+      # Variables:
+      # - File Variables
+      #   Use an exclamation mark `!` to negate a variable.
+      #   Example: `!$test` matches any file that is not a go test file.
+      #
+      #   `$all` - matches all go files
+      #   `$test` - matches all go test files
+      #
+      # - Package Variables
+      #
+      #   `$gostd` - matches all of go's standard library (Pulled from `GOROOT`)
+      #
+      # Default (applies if no custom rules are defined): Only allow $gostd in all files.
+      rules:
+        # Name of a rule.
+        main:
+          # Everything except the two scoped rules below.
+          files:
+            - "!**/internal/logging/**"
+            - "!**/internal/secret/**"
+            - "!**/magefile.go"
+
+          # Defines package matching behavior. Available modes:
+          # - `original`: allowed if it doesn't match the deny list and either matches the allow list or the allow list is empty.
+          # - `strict`: allowed only if it matches the allow list and either doesn't match the deny list or the allow rule is more specific (longer) than the deny rule.
+          # - `lax`: allowed if it doesn't match the deny list or the allow rule is more specific (longer) than the deny rule.
+          # Default: "original"
+          list-mode: strict
+
+          # List of allowed packages.
+          # Entries can be a variable (starting with $), a string prefix, or an exact match (if ending with $).
+          # Default: []
+          allow:
+            # This module, so internal/ imports are not denied by strict mode.
+            - github.com/uhdaptuhbl/template-go-multi-user-web
+            - go.uber.org/zap
+            # Tracing and instrumentation. See
+            # docs/adr/0004-use-opentelemetry-for-tracing.md.
+            - go.opentelemetry.io/otel
+            - go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
+            - go.opentelemetry.io/contrib/instrumentation/runtime
+            # Metrics are written against the OpenTelemetry metric API above and
+            # only exposed through Prometheus. client_golang is permitted for
+            # the registry and the /metrics handler, not for instrumenting code:
+            # see docs/adr/0005-use-opentelemetry-metrics-with-prometheus.md.
+            - github.com/prometheus/client_golang/prometheus
+            # Configuration loading. See
+            # docs/adr/0006-configuration-loading.md.
+            - github.com/sethvargo/go-envconfig
+            - github.com/go-playground/validator/v10
+            # Struct diffs in tests. Chosen over testify: one module with no
+            # dependencies of its own, and it reports which field differs
+            # instead of printing two dumps to compare by eye.
+            - github.com/google/go-cmp/cmp
+            # Bounded, error-propagating fan-out. sync.WaitGroup.Go waits for
+            # every goroutine regardless of outcome; errgroup.WithContext
+            # cancels the remaining work as soon as one goroutine fails, and
+            # SetLimit bounds the pool. Scoped to errgroup: the rest of x/sync
+            # (semaphore, singleflight, syncmap) is not allowed by this entry.
+            - golang.org/x/sync/errgroup
+            # Persistence. pgx is used directly rather than through
+            # database/sql, so that UUID, TIMESTAMPTZ, JSONB, and INET keep
+            # their types; goose applies migrations over a database/sql handle
+            # opened with pgx's stdlib shim for that purpose alone. See
+            # docs/adr/0011-persistence-and-data-access.md.
+            - github.com/jackc/pgx/v5
+            - github.com/pressly/goose/v3
+            # Authentication. OpenID Connect relying party, its OAuth2
+            # substrate, and WebAuthn. See
+            # docs/adr/0012-authentication-model.md.
+            - github.com/coreos/go-oidc/v3
+            - golang.org/x/oauth2
+            - github.com/go-webauthn/webauthn
+            # Scripted WebAuthn authenticator for the passkey ceremony
+            # integration tests (internal/auth/passkey_ceremony_integration_test.go).
+            # depguard's "main" rule has no test-only scope short of
+            # duplicating this whole allow list under a second, $test-scoped
+            # rule; this module is a test double only, never imported from
+            # production code, and go-webauthn/webauthn above already backs
+            # both.
+            - github.com/descope/virtualwebauthn
+            # UUIDv7 identifiers, used as the primary key of every table.
+            - github.com/google/uuid
+            # Token-bucket rate limiting on the authentication endpoints.
+            - golang.org/x/time/rate
+            # SMTP delivery for email one-time codes. Chosen over net/smtp,
+            # which cannot do implicit TLS on port 465 and has no maintained
+            # support for modern auth mechanisms.
+            - github.com/wneessen/go-mail
+            # QR encoding for invite redemption links. Chosen for being small,
+            # stable, and dependent on nothing outside the standard library;
+            # the server must render the image itself because this service
+            # ships no frontend to render one. See
+            # docs/adr/0012-authentication-model.md.
+            - rsc.io/qr
+            # A disposable Postgres for the integration suite. Reached only
+            # from internal/store/storetest, which exists to serve tests.
+            - github.com/testcontainers/testcontainers-go
+            # Variable entries apparently have to be last to work properly.
+            - $gostd
+
+          # List of packages that are not allowed.
+          # Entries can be a variable (starting with $), a string prefix, or an exact match (if ending with $).
+          # Default: []
+          deny:
+            - pkg: "math/rand$"
+              desc: Use math/rand/v2
+            - pkg: "log$"
+              desc: Use go.uber.org/zap. Where a third-party API demands a *log.Logger, adapt with zap.NewStdLog.
+            - pkg: "log/slog$"
+              desc: Application code logs via zap. log/slog belongs only in internal/logging, which bridges library slog records into zap, and internal/secret, which implements slog.LogValuer to redact.
+            - pkg: "github.com/sirupsen/logrus"
+              desc: Use go.uber.org/zap; see docs/adr/0003-use-uber-zap-for-logging.md
+            - pkg: "github.com/pkg/errors"
+              desc: Should be replaced by standard lib errors package
+
+        # Secret redaction. Scoped so that log/slog is reachable for one narrow
+        # purpose: secret.String implements slog.LogValuer so a secret passed to
+        # a dependency that logs through slog is redacted before the bridge
+        # hands the record to zap. Without it slog would print the raw string,
+        # since it does not consult fmt.Stringer for a string-kinded value.
+        # This package does not log through slog; it implements a redaction
+        # contract defined in terms of it. It is a leaf package so that every
+        # package holding a secret can use the type without an import cycle.
+        #
+        # depguard has no rule inheritance, so this deny list is a copy of
+        # `main`'s minus the log/slog entry. Adding a deny to `main` means
+        # adding it here too, or this package silently gains an exemption.
+        secret:
+          files:
+            - "**/internal/secret/**"
+
+          list-mode: strict
+
+          allow:
+            - github.com/uhdaptuhbl/template-go-multi-user-web
+            - github.com/google/go-cmp/cmp
+            - $gostd
+
+          deny:
+            - pkg: "math/rand$"
+              desc: Use math/rand/v2
+            - pkg: "log$"
+              desc: Use go.uber.org/zap. Where a third-party API demands a *log.Logger, adapt with zap.NewStdLog.
+            - pkg: "github.com/sirupsen/logrus"
+              desc: Use go.uber.org/zap; see docs/adr/0003-use-uber-zap-for-logging.md
+            - pkg: "github.com/pkg/errors"
+              desc: Should be replaced by standard lib errors package
+
+        # The slog-to-zap bridge. Scoped to one package so log/slog appears in
+        # exactly one place, keeping the rest of the codebase on zap.
+        #
+        # depguard has no rule inheritance, so this deny list is a copy of the
+        # one above minus the logging entries. Adding a deny to `main` means
+        # adding it here too, or the bridge silently gains an exemption.
+        #
+        # log/slog and log are both permitted here deliberately: adapting a
+        # *log.Logger via zap.NewStdLog is this package's job as well.
+        logging-bridge:
+          files:
+            - "**/internal/logging/**"
+
+          list-mode: strict
+
+          allow:
+            - github.com/uhdaptuhbl/template-go-multi-user-web
+            - go.uber.org/zap
+            - $gostd
+
+          deny:
+            - pkg: "math/rand$"
+              desc: Use math/rand/v2
+            - pkg: "github.com/sirupsen/logrus"
+              desc: Use go.uber.org/zap; see docs/adr/0003-use-uber-zap-for-logging.md
+            - pkg: "github.com/pkg/errors"
+              desc: Should be replaced by standard lib errors package
+
+        # The build targets. Scoped so the mage library is reachable in exactly
+        # one file, which //go:build mage keeps out of every ordinary build.
+        # zap is deliberately absent: a build target is a command-line tool
+        # whose output is a terminal, not a log stream, so it reports through
+        # mage's own sh helpers instead.
+        #
+        # depguard has no rule inheritance, so this deny list is a copy of
+        # `main`'s. Adding a deny to `main` means adding it here too, or the
+        # magefile silently gains an exemption.
+        magefile:
+          files:
+            - "**/magefile.go"
+
+          list-mode: strict
+
+          allow:
+            # See docs/adr/0009-build-and-release-tooling.md.
+            - github.com/magefile/mage
+            - $gostd
+
+          deny:
+            - pkg: "math/rand$"
+              desc: Use math/rand/v2
+            - pkg: "log$"
+              desc: Use go.uber.org/zap. Where a third-party API demands a *log.Logger, adapt with zap.NewStdLog.
+            - pkg: "log/slog$"
+              desc: Application code logs via zap. log/slog belongs only in internal/logging, which bridges library slog records into zap, and internal/secret, which implements slog.LogValuer to redact.
+            - pkg: "github.com/sirupsen/logrus"
+              desc: Use go.uber.org/zap; see docs/adr/0003-use-uber-zap-for-logging.md
+            - pkg: "github.com/pkg/errors"
+              desc: Should be replaced by standard lib errors package
+
+    # --- govet ---------------------------------------------------------------
+    govet:
+      # Enable the shadow analyzer in addition to the standard passes.
+      # Flags variables that shadow an outer-scope variable.
+      enable:
+        - shadow
+      settings:
+        shadow:
+          # Strict, because CLAUDE.md forbids every shadowing :=. The default
+          # mode reports a shadow only when the outer variable is read again
+          # after the inner scope, which let 183 of them through.
+          strict: true
+
+    # --- gocyclo -------------------------------------------------------------
+    gocyclo:
+      # Functions above this branch count get split. Paired with nestif, which
+      # covers the nesting-depth axis.
+      min-complexity: 15
+
+    # --- errcheck ------------------------------------------------------------
+    errcheck:
+      # forcetypeassert owns type-assertion error checking — avoid duplicates.
+      check-type-assertions: false
+      # Blank-identifier discards are often code smell.
+      check-blank: true
+      # The built-in exclusion list is well-chosen; keep it active.
+      disable-default-exclusions: false
+
+    # --- errorlint -----------------------------------------------------------
+    errorlint:
+      # Catch fmt.Errorf("...: %v", err) — must use %w to preserve the cause.
+      errorf: true
+      errorf-multi: true
+      # Catch type assertions on errors instead of errors.As.
+      asserts: true
+      # Catch == / != comparisons on errors instead of errors.Is.
+      comparison: true
+
+    # --- nolintlint ----------------------------------------------------------
+    nolintlint:
+      # Every //nolint directive must include an explanatory comment.
+      require-explanation: true
+      # Specific linter name(s) must be listed — no bare //nolint.
+      require-specific: true
+      # Stale directives that no longer suppress any finding are reported.
+      allow-unused: false
+
+    # --- revive --------------------------------------------------------------
+    revive:
+      confidence: 0.8
+      severity: error
+      rules:
+        # Correctness & error handling
+        - name: context-as-argument
+          arguments:
+            - allowTypesBefore: "*testing.T,*testing.B,*testing.F"
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: errorf
+        - name: modifies-value-receiver
+        - name: unexported-return
+        - name: unreachable-code
+
+        # Style & readability
+        - name: blank-imports
+        - name: dot-imports
+        - name: exported
+        - name: package-comments
+        - name: indent-error-flow
+        - name: if-return
+        - name: early-return
+          arguments:
+            - preserveScope: true
+        - name: superfluous-else
+        - name: increment-decrement
+        - name: range
+        - name: var-declaration
+        - name: var-naming
+        - name: receiver-naming
+        - name: time-naming
+        - name: redefines-builtin-id
+        - name: useless-break
+
+        # Parameters & unused code
+        - name: unused-parameter
+          arguments:
+            - allowRegex: "^_"
+        - name: unused-receiver
+
+    # --- gocritic ------------------------------------------------------------
+    gocritic:
+      # Without this, gocritic runs only its enabled-by-default subset and the
+      # disabled-checks below are no-ops.
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+
+      # Disable checks that are noisy or redundant with other enabled linters.
+      disabled-checks:
+        # Flags every range over a struct above its size threshold, including
+        # cases where the copy is irrelevant. Re-enable if profiling implicates
+        # range copies. (Unrelated to copyloopvar, which covers loop-variable
+        # capture rather than copy cost.)
+        - rangeValCopy
+        # Covered by nolintlint with stricter settings.
+        - whyNoLint
+        # Same size-threshold noise as rangeValCopy, on parameters.
+        - hugeParam
+        # Asks for named results on functions returning several values of one type; this
+        # repository bans named return values outright.
+        - unnamedResult
+
+    # --- tagliatelle ---------------------------------------------------------
+    tagliatelle:
+      case:
+        rules:
+          # These tag names are the wire contract, not a style choice: renaming
+          # a JSON field after clients exist is a breaking change. `snake` is
+          # inherited, not yet chosen. Accepting
+          # docs/adr/0002-frontend-stack.md settles it, since a JavaScript
+          # consumer argues for `camel` instead.
+          json: snake
+
+    # --- goconst -------------------------------------------------------------
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+      # Strings used only as function arguments produce too much noise.
+      ignore-calls: true
+
+    # --- nakedret ------------------------------------------------------------
+    nakedret:
+      # Flag every naked return unconditionally, regardless of function length.
+      max-func-lines: 0
+
+    # --- inamedparam ---------------------------------------------------------
+    inamedparam:
+      # Single-parameter interface methods read clearly without a name.
+      skip-single-param: true
+
+    # --- interfacebloat ------------------------------------------------------
+    interfacebloat:
+      # Small interfaces are the point: an interface this wide is usually a
+      # concrete type in disguise, or a seam drawn in the wrong place. Five
+      # still allows a CRUD-plus-List repository. Exceed it only with a
+      # //nolint that explains why.
+      max: 5
+
+    # --- ireturn -------------------------------------------------------------
+    ireturn:
+      # Allow returning these interface types — all are legitimate Go idioms.
+      allow:
+        - generic # Allows functions to return generic types
+        - anon    # anonymous inline interfaces
+        - context.Context
+        - empty   # any / interface{}
+        - error
+        - http.Handler
+        - io.ReadCloser
+        - io.Reader
+        - io.Writer
+        # The slog-to-zap bridge in internal/logging must return this type.
+        - log/slog.Handler
+        # Required by net/http: a ResponseWriter wrapper must expose
+        # Unwrap() http.ResponseWriter for http.ResponseController to walk the
+        # chain. The signature is the standard library's, not a design choice.
+        - http.ResponseWriter
+        # OpenTelemetry's providers and propagator are interfaces by design, so
+        # that instrumentation can be handed a no-op one. internal/telemetry
+        # returns them instead of installing them on the otel globals, which is
+        # the whole point of the accessors: see
+        # docs/adr/0004-use-opentelemetry-for-tracing.md.
+        - go.opentelemetry.io/otel/trace.TracerProvider
+        - go.opentelemetry.io/otel/metric.MeterProvider
+        - go.opentelemetry.io/otel/propagation.TextMapPropagator
+
+    # --- nonamedreturns ------------------------------------------------------
+    nonamedreturns:
+      # Flag named returns even when used in defer functions — no exemptions.
+      report-error-in-defer: true
+
+    # --- exhaustive ----------------------------------------------------------
+    exhaustive:
+      # A switch with a default case is considered exhaustive.
+      default-signifies-exhaustive: true
+
+    # --- forbidigo -----------------------------------------------------------
+    forbidigo:
+      # Patterns match against the source expression, so fmt.Errorf,
+      # fmt.Sprintf, and fmt.Fprintf(w, ...) are untouched by design. Only the
+      # calls that write to a stream nobody passed in are forbidden.
+      forbid:
+        - pattern: '^fmt\.Print(f|ln)?$'
+          msg: Log through the zap logger. fmt.Print* writes to stdout and escapes structured logging, log levels, and redaction.
+        - pattern: '^print(ln)?$'
+          msg: Log through the zap logger. The builtin print/println write to stderr unformatted and bypass logging entirely.
+      exclude-godoc-examples: true
+
+    # --- gosec ---------------------------------------------------------------
+    gosec:
+      excludes:
+        # G104: errors unhandled — redundant with errcheck; produces duplicates.
+        - G104
+        # G115: integer type conversion overflow — very noisy; flags every
+        # safe int -> int32 conversion.
+        - G115
+        # G404: use of math/rand instead of crypto/rand — legitimate for
+        # non-cryptographic purposes (jitter, shuffling, test data, etc.).
+        - G404
+        # G304: file path provided as taint input — fires on any os.Open(var).
+        # Re-evaluate if user-supplied paths ever reach the filesystem.
+        - G304
+
+  # -------------------------------------------------------------------------
+  # Exclusions
+  # -------------------------------------------------------------------------
+  exclusions:
+    generated: lax
+    warn-unused: true
+
+    presets:
+      # Suppresses doc-comment style issues on unexported identifiers and
+      # test files.
+      - comments
+      # Well-known false positives across several linters.
+      - common-false-positives
+      # Suppresses errcheck on stdlib calls whose errors are never meaningful:
+      # fmt.Fprintf, (*bytes.Buffer).Write, (*strings.Builder).WriteString, etc.
+      - std-error-handling
+      # NOTE: "legacy" preset intentionally omitted — it suppresses findings
+      # that were false positives in old Go toolchains. On Go 1.27 those
+      # suppressions hide real issues with no benefit.
+
+    rules:
+      # Test files — relaxed rules where test conventions differ from
+      # production code conventions.
+      - path: _test\.go
+        linters:
+          - goconst        # repeated literals aid test readability
+          - inamedparam    # test interface stubs rarely need named params
+          - ireturn        # test doubles often return interfaces by design
+          - musttag        # test structs are rarely marshaled
+          - noctx          # context.Background() is correct in tests
+          - unparam        # test helper signatures are intentionally uniform
+
+      # canonicalheader wants the literal spelled X-Request-ID. The form that
+      # actually goes on the wire is X-Request-Id, because net/textproto
+      # canonicalises to it, and docs/adr/0008 plus the AC-002.6 to AC-002.9
+      # text both fix that spelling. The constant matches the wire form on
+      # purpose; renaming it would leave the source disagreeing with the
+      # specification it implements.
+      - text: 'use "X-Request-ID" instead of "X-Request-Id"'
+        linters:
+          - canonicalheader
+
+      # gosec G117 flags marshaling a struct that has a secret-looking field.
+      # The redaction tests exist precisely to marshal such a struct and prove
+      # the secret does not survive the round trip, so the finding is inverted
+      # there: the config types carry secret.String fields for exactly this
+      # reason, and a test that could not marshal one could not check it.
+      # Scoped to test files and to G117 alone, so production code that
+      # marshals a secret is still flagged.
+      - path: _test\.go
+        text: 'G117'
+        linters:
+          - gosec
+
+      # gosec G101 fires on three audit action constants -- ActionPasskeyRegistered,
+      # ActionPasskeyRemoved, ActionPasskeyCompleted -- solely because their names
+      # contain "key". Their values are audit log action names mandated verbatim by
+      # specs/008-users-and-auth ("auth.passkey.registered" and friends) and hold no
+      # credential of any kind. Scoped to that one file and to G101 alone, so a real
+      # hardcoded credential anywhere else is still flagged.
+      - path: internal/audit/actions\.go
+        text: 'G101'
+        linters:
+          - gosec
+
+      # gosec's G124 analyzer flags an http.Cookie literal whose Secure field is
+      # not a constant true. internal/session sets Secure from configuration
+      # (Config.CookieSecure), which is a field load rather than a constant, so
+      # the analyzer cannot see it and fires on every cookie this package
+      # builds. The same literals do set HttpOnly, SameSite=Lax and Path=/, and
+      # cookie_test.go asserts all of them against a real ResponseRecorder.
+      # The test's own AddCookie literal is flagged for the same reason, and
+      # there those attributes are meaningless: AddCookie serialises only
+      # name=value into a request Cookie header.
+      #
+      # This is a config exclusion rather than //nolint:gosec on the lines
+      # themselves, because a bare //nolint:gosec is linter-wide: it would also
+      # suppress G117 on the very literal that carries the raw session token in
+      # Value. Keyed on G124 alone, every other gosec rule still applies there.
+      - path: internal/session/cookie.*\.go
+        text: 'G124'
+        linters:
+          - gosec
+
+      # errcheck treats the typed error errors.AsType returns as unchecked
+      # whenever only its boolean result is wanted, which is the API's ordinary
+      # use. modernize recommends AsType over the errors.As out-parameter form,
+      # so without this the two linters contradict each other and no spelling
+      # of the call satisfies both.
+      - text: 'Error return value of `errors.AsType` is not checked'
+        linters:
+          - errcheck

@@ -1,0 +1,99 @@
+name: Release
+
+# Tags only. A release must not be startable from a branch push, a pull
+# request, or a manual dispatch: any of those would let code that has not been
+# reviewed and tagged claim a version, using the publishing permissions below.
+# See specs/004-release-automation/requirements.md for the constraint.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Read-only by default. The one job that publishes widens this for itself.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a release in flight: a half-published tag is worse than a
+  # queued one.
+  cancel-in-progress: false
+
+jobs:
+  # The gates ci.yml applies to a branch, run again here: ci.yml triggers on
+  # branches and pull requests, not tags, so without this a tag could be cut
+  # from a commit those gates never saw. It calls that workflow rather than
+  # repeating its commands, so the two cannot drift apart.
+  gate:
+    name: Gate
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish
+    needs: gate
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # create the GitHub release
+      packages: write # push the image to ghcr.io
+      id-token: write # keyless cosign signing and provenance, via OIDC
+      attestations: write # record the provenance attestation
+      artifact-metadata: write # storage record for the attested artifact
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # GoReleaser needs the full history to work out what changed since
+          # the previous tag, which is what the release notes are built from.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Multi-platform manifests need buildx. No QEMU step: Dockerfile.release
+      # only copies an already-cross-compiled binary, so nothing of the target
+      # architecture is ever executed during the build.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # GitHub only issues attestations for public repositories, and for
+      # private or internal ones on GitHub Enterprise Cloud. The condition
+      # keeps a release from failing on a private repository over a feature
+      # that repository cannot have, while a public project bootstrapped from
+      # this one gets provenance with no edit. Signing above is unconditional,
+      # because Sigstore has no such restriction.
+      - name: Attest build provenance
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          # Written by GoReleaser's docker_digest pipe (v2.12 and later),
+          # one line per published image and manifest, with the sha256:
+          # prefix already stripped to match what this action expects.
+          # digests.txt is the default name; the pipe is not configured in
+          # .goreleaser.yaml because the default is what is wanted.
+          #
+          # The file does not appear in a local `goreleaser release
+          # --snapshot` run, because a snapshot never pushes images and the
+          # pipe only runs on a real publish. Its absence there is expected
+          # and is not evidence that this path is broken.
+          #
+          # https://goreleaser.com/customization/publish/attestations/
+          subject-checksums: dist/digests.txt

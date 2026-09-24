@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+
+# Release image. Assembly only: GoReleaser has already cross-compiled the
+# binary for each platform and placed it in the build context under
+# <os>/<arch>/, so nothing is compiled here. The self-contained build a
+# contributor runs from a clean checkout is ./Dockerfile, and the two must stay
+# in agreement about the runtime base, the user, and the entrypoint.
+#
+# TARGETOS and TARGETARCH are supplied by buildx for each platform in the
+# manifest. See specs/004-release-automation/design.md.
+
+# distroless/static carries CA certificates, timezone data, and nothing else:
+# no shell, no package manager, and a non-root user by default.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETOS
+ARG TARGETARCH
+
+COPY ${TARGETOS}/${TARGETARCH}/service /usr/local/bin/service
+
+# The application listener only. The administrative listener binds loopback by
+# default and is deliberately not published; reaching it requires setting
+# SERVICE_ADMIN_ADDR and a network policy that restricts who may connect.
+EXPOSE 8080
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/usr/local/bin/service"]

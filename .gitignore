@@ -1,0 +1,54 @@
+# Go
+/bin/
+# GoReleaser's output directory.
+/dist/
+/service
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# JS / Node frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+build/
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.turbo/
+coverage/
+
+# Frontend build output, which internal/web compiles into the binary.
+# index.html is tracked as a placeholder so `go build` works from a clean clone
+# with no frontend toolchain installed; go:embed fails on an empty dist/.
+# Whether real built assets get committed is settled by
+# docs/adr/0002-frontend-stack.md.
+internal/web/dist/*
+!internal/web/dist/index.html
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Git worktrees. Branch work is checked out under .worktrees/<name>/, inside
+# the project directory so that it inherits the project's permissions. The
+# checkouts are working state, never part of a commit.
+/.worktrees/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

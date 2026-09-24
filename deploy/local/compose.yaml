@@ -1,0 +1,169 @@
+# Local observability stack for this service.
+#
+# Purpose: see traces and metrics on a developer machine without standing up
+# any infrastructure. This is not a deployment topology; see
+# docs/adr/0007-deployment-topology.md for how the service is actually run.
+#
+# Run:
+#   docker compose -f deploy/local/compose.yaml up --build
+#
+# Where to look:
+#   app         http://localhost:8080  (through the gateway)
+#   Jaeger UI   http://localhost:16686
+#   Prometheus  http://localhost:9091
+#   raw metrics http://localhost:9090/metrics
+#
+# The application listener is reachable only through the gateway, which is the
+# topology docs/adr/0007-deployment-topology.md says the service is always
+# deployed in. Pointing a browser straight at it is the one shape the ADR says
+# never happens, so the stack does not offer it. See specs/007-local-gateway/.
+#
+# Every published port is bound to loopback on the host. Compose's default is
+# 0.0.0.0, which offers the whole stack to any network the machine is on.
+
+# Declared with an explicit subnet rather than left to Docker's address pool,
+# because SERVICE_PROXY_TRUSTED_CIDRS below has to name it and a value that
+# matches whatever was allocated today stops matching on another machine.
+#
+# ip_range confines Docker's automatic assignment to the upper half, so the
+# gateway's fixed address in the lower half can never already be taken by a
+# container that happened to start first.
+networks:
+  stack:
+    ipam:
+      config:
+        - subnet: 172.31.255.0/24
+          ip_range: 172.31.255.128/25
+
+services:
+  gateway:
+    # The reverse proxy ADR 0007 says the service always sits behind. Its
+    # configuration is deploy/local/nginx.conf, which is a starting point for
+    # a real one: the proxy_set_header block carries over unchanged.
+    #
+    # Pinned to the newest stable 1.29.x Alpine tag as of 2026-09-20,
+    # confirmed against https://hub.docker.com/v2/repositories/library/nginx/tags.
+    image: nginx:1.29.8-alpine
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      stack:
+        # Fixed, so that the trusted-CIDR value below can name this one
+        # address rather than the whole network.
+        ipv4_address: 172.31.255.5
+    depends_on:
+      - app
+
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      # The admin port only, and on loopback rather than every interface: it
+      # will dump the heap, every goroutine's stack, and the process command
+      # line to whoever asks. The application port is deliberately absent, so
+      # that the gateway is the only way in and the forwarded-header path is
+      # the one a developer exercises.
+      - "127.0.0.1:9090:9090"
+    networks:
+      - stack
+    environment:
+      # The admin listener binds loopback by default, which is unreachable
+      # from another container. Binding all interfaces is acceptable only
+      # inside this private compose network.
+      SERVICE_ADMIN_ADDR: ":9090"
+      SERVICE_LOG_FORMAT: json
+      # The gateway, and nothing else. This is what makes the service believe
+      # the gateway's X-Forwarded-For and X-Request-Id; with it unset, the
+      # default, both are ignored and every request is attributed to the
+      # gateway.
+      #
+      # A /32 rather than the whole subnet, and not for tidiness. The host
+      # reaches these containers through the bridge's own address, which is
+      # inside the subnet, so trusting the subnet makes the connecting client
+      # a trusted hop: the service walks X-Forwarded-For right to left, skips
+      # it as another proxy, runs out of entries, and attributes every request
+      # to the gateway. Trusting only the proxy is both correct here and the
+      # rule a real deployment wants.
+      SERVICE_PROXY_TRUSTED_CIDRS: 172.31.255.5/32
+      OTEL_SERVICE_NAME: service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      SERVICE_DB_DSN: postgres://service:service@postgres:5432/service?sslmode=disable
+      SERVICE_DB_MIGRATE_ON_START: "true"
+      # Passkeys are on by default and need the origin a browser reaches the
+      # service at, which here is the gateway's published port. Without it
+      # the process refuses to start. localhost is a secure context, so
+      # WebAuthn works over this plain-HTTP origin.
+      SERVICE_AUTH_PUBLIC_ORIGIN: http://localhost:8080
+      # The gateway serves plain HTTP (AC-007.2), and the service refuses an
+      # http origin while cookies are Secure. A __Host- cookie name must be
+      # Secure, so the local stack drops the prefix too. Never copy these two
+      # lines to a deployment reached over the network.
+      SERVICE_SESSION_COOKIE_SECURE: "false"
+      SERVICE_SESSION_COOKIE_NAME: service_session
+    # The service exits if it cannot reach the database at start, so wait for
+    # Postgres to pass its healthcheck, not merely for its container to start.
+    depends_on:
+      jaeger:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    # The database the service now requires. Pinned to the newest stable 16.x
+    # Alpine tag; the schema uses nothing newer than Postgres 16.
+    image: postgres:16-alpine
+    networks:
+      - stack
+    environment:
+      POSTGRES_USER: service
+      POSTGRES_PASSWORD: service
+      POSTGRES_DB: service
+    ports:
+      # Published on loopback so the integration suite and a psql session on
+      # the host can reach it. Loopback rather than every interface because
+      # the password is in this file.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U service -d service"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    tmpfs:
+      # The local database is disposable, so keep it off disk: faster, and it
+      # cannot accumulate state between runs that a test then comes to depend
+      # on. There is no named volume for the same reason.
+      - /var/lib/postgresql/data
+
+  jaeger:
+    # Jaeger v2 all-in-one accepts OTLP/HTTP on 4318 natively, so no separate
+    # OpenTelemetry Collector is needed here.
+    # Pinned to a full version. There is no floating "2" tag: the
+    # jaegertracing/jaeger repository publishes only complete versions, so
+    # image: jaegertracing/jaeger:2 does not resolve and the stack never
+    # started. Confirmed against
+    # https://hub.docker.com/v2/repositories/jaegertracing/jaeger/tags.
+    image: jaegertracing/jaeger:2.21.0
+    networks:
+      - stack
+    ports:
+      # UI only. 4318 stays internal to the compose network; the app reaches
+      # it by service name.
+      - "127.0.0.1:16686:16686"
+
+  prometheus:
+    # Newest stable 3.x tag as of 2026-09-19, confirmed against
+    # https://hub.docker.com/v2/repositories/prom/prometheus/tags and
+    # https://api.github.com/repos/prometheus/prometheus/releases.
+    image: prom/prometheus:v3.14.0
+    networks:
+      - stack
+    ports:
+      # The host's 9090 is taken by the app's admin port.
+      - "127.0.0.1:9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - app

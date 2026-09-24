@@ -1,0 +1,28 @@
+name: Feature request
+description: Something the service should do that it does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Behaviour changes are specified in `specs/` before they are built.
+        This issue is where that starts.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing or costly today. Describe the problem, not a solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What would be different, phrased as observable behaviour.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

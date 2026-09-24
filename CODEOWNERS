@@ -1,0 +1,6 @@
+# Review ownership. One maintainer today, so one rule; the file exists so that
+# adding a second owner is an edit rather than a decision.
+#
+# GitHub reads this from the repository root, .github/, or docs/.
+
+* @uhdaptuhbl

@@ -1,0 +1,44 @@
+name: Bug report
+description: Something behaves differently from what is documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a security vulnerability here. See `SECURITY.md` for
+        private reporting.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest sequence that shows it, including the configuration used.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >
+        The version, commit, and build date the process logs at startup, or the
+        image tag you ran.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Relevant log lines. Setting SERVICE_LOG_FORMAT=json and
+        SERVICE_LOG_LEVEL=debug usually gives more to work with.
+      render: text
