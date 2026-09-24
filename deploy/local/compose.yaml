@@ -114,7 +114,7 @@ services:
   postgres:
     # The database the service now requires. Pinned to the newest stable 16.x
     # Alpine tag; the schema uses nothing newer than Postgres 16.
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     networks:
       - stack
     environment:
