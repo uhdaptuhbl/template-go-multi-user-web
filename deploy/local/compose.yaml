@@ -157,7 +157,7 @@ services:
     # Newest stable 3.x tag as of 2026-09-19, confirmed against
     # https://hub.docker.com/v2/repositories/prom/prometheus/tags and
     # https://api.github.com/repos/prometheus/prometheus/releases.
-    image: prom/prometheus:v3.14.0
+    image: prom/prometheus:v3.15.0
     networks:
       - stack
     ports:
