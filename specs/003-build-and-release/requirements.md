@@ -1,7 +1,7 @@
 ---
 feature: 003-build-and-release
 created: 2026-09-17
-updated: 2026-09-24
+updated: 2026-10-10
 status: implemented
 ---
 
@@ -51,7 +51,7 @@ inside the container.
 **Acceptance criteria** (EARS notation, IDs stable for the life of the feature):
 
 - `AC-003.4`: The container image SHALL run as a non-root user and SHALL contain no shell.
-- `AC-003.7`: WHEN the container image runs with no environment set, the process SHALL bind the application listener on `:8080` and the administrative listener on `127.0.0.1:9090`.
+- `AC-003.7`: WHEN the container image runs with only its required environment set (a database connection string and a public origin), the process SHALL bind the application listener on `:8080` and the administrative listener on `127.0.0.1:9090`.
 
 ### Story 3: Maintainer trusts that a merged change passed lint, tests, and a vulnerability scan
 
@@ -80,5 +80,6 @@ None. See `docs/adr/0009-build-and-release-tooling.md` for the settled tooling c
 
 Amendments after approval, newest first.
 
+- `2026-10-10`: `AC-003.7` no longer held as written. Since spec 008 the process needs a database connection string and, with passkeys on by default, a public origin, so an image run with no environment exits at start-up. The CI `container` job had failed on `main` since the first commit. Reworded `AC-003.7` to name that required environment; the `container` job now starts Postgres on a private network and passes both variables. The listener addresses are unchanged. Changed `AC-003.7`.
 - `2026-09-17`: Implementation complete; every criterion is cited by a passing test.
 - `2026-09-17`: Initial version, approved.

@@ -1,7 +1,7 @@
 ---
 feature: 003-build-and-release
 created: 2026-09-17
-updated: 2026-09-19
+updated: 2026-10-10
 ---
 
 # Tasks: Build and release
@@ -51,8 +51,10 @@ Order tasks so the suite is green at every boundary; no task should depend on a 
 
 - [x] **T7** Add a `container` job to `.github/workflows/ci.yml` that builds the image and
       asserts the properties `AC-003.4` and `AC-003.7` describe: the configured user, the
-      absence of a shell, the application listener answering on `:8080` with no environment
-      set, the administrative port being unreachable from outside the container, and the
+      absence of a shell, the application listener answering on `:8080` with only the
+      required environment set (a database connection string and a public origin, with
+      Postgres started beside the image), the administrative port being unreachable from
+      outside the container, and the
       administrative endpoints answering once `SERVICE_ADMIN_ADDR` binds an interface.
   - Satisfies: `AC-003.4`, `AC-003.7`
   - Verify: the `container` job passes. It supersedes the hand-run commands under T3 and T4
@@ -69,7 +71,7 @@ Order tasks so the suite is green at every boundary; no task should depend on a 
 | `AC-003.4` | T3, T7 | The `container` job in `ci.yml`: `docker inspect` user check and `--entrypoint sh` no-shell check |
 | `AC-003.5` | T5 | `golangci-lint run && go test -race ./... && go tool mage build && govulncheck ./...` |
 | `AC-003.6` | T6 | `go mod tidy && git diff --exit-code go.mod go.sum` |
-| `AC-003.7` | T4, T7 | The `container` job in `ci.yml`: `curl` against `:8080` with no environment set, and the admin port unreachable from outside |
+| `AC-003.7` | T4, T7 | The `container` job in `ci.yml`: `curl` against `:8080` with only the required environment set, and the admin port unreachable from outside |
 
 ## Deferred
 

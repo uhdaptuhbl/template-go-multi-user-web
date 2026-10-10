@@ -114,6 +114,11 @@ jobs:
   container:
     name: Container
     runs-on: ubuntu-latest
+    # AC-003.7: the environment the image needs to start, and nothing else.
+    # The database runs beside the image on a private network.
+    env:
+      SERVICE_DB_DSN: postgres://service:service@service-ci-db:5432/service?sslmode=disable
+      SERVICE_AUTH_PUBLIC_ORIGIN: https://service.example
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -142,20 +147,45 @@ jobs:
 
       # The cleanup step below runs "if: always()", which covers a failure and
       # an ordinary cancellation but not a runner that is killed outright. On a
-      # self-hosted runner the container then outlives the job and the next run
+      # self-hosted runner the containers then outlive the job and the next run
       # fails at "docker run" on the name rather than on anything it tests.
-      # Removing a container that is normally absent costs nothing and keeps
-      # that failure from being attributed to the change under test.
+      # Removing containers and a network that are normally absent costs
+      # nothing and keeps that failure from being attributed to the change
+      # under test.
       - name: Remove containers a killed run may have left behind
-        run: docker rm -f service-ci service-ci-admin >/dev/null 2>&1 || true
+        run: |
+          docker rm -f service-ci service-ci-admin service-ci-db >/dev/null 2>&1 || true
+          docker network rm service-ci >/dev/null 2>&1 || true
+
+      # pg_isready goes over TCP because the postgres image first runs a
+      # temporary socket-only server while it initializes, which would
+      # otherwise read as ready before the real server listens.
+      - name: Start the database the image needs
+        run: |
+          docker network create service-ci
+          docker run -d --name service-ci-db --network service-ci \
+            -e POSTGRES_USER=service -e POSTGRES_PASSWORD=service -e POSTGRES_DB=service \
+            postgres:16-alpine
+
+          for _ in $(seq 1 60); do
+            if docker exec service-ci-db pg_isready -h 127.0.0.1 -U service -d service >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "database never became ready" >&2
+          docker logs service-ci-db >&2
+          exit 1
 
       # AC-003.7, both halves: the application listener answers on :8080 with
-      # nothing configured, and the administrative listener is bound to
-      # loopback inside the container, so publishing its port is not enough to
-      # reach it.
-      - name: Serves :8080 and keeps the admin port unreachable, with no environment set
+      # only the required environment set, and the administrative listener is
+      # bound to loopback inside the container, so publishing its port is not
+      # enough to reach it.
+      - name: Serves :8080 and keeps the admin port unreachable, with only the required environment set
         run: |
-          docker run -d --name service-ci -p 8080:8080 -p 9090:9090 service:ci
+          docker run -d --name service-ci --network service-ci -p 8080:8080 -p 9090:9090 \
+            -e SERVICE_DB_DSN -e SERVICE_AUTH_PUBLIC_ORIGIN service:ci
 
           ready=""
           for _ in $(seq 1 50); do
@@ -178,11 +208,14 @@ jobs:
           fi
 
       # The other half of the same default: bound to loopback, not disabled.
-      # Told to bind an interface, it serves the operational endpoints.
+      # Told to bind an interface, it serves the operational endpoints. It
+      # starts after the first container answered, so the migrations are
+      # already applied: migrating on start takes no lock across processes,
+      # and two first starts against one empty database race each other.
       - name: Serves the administrative endpoints when told to bind them
         run: |
-          docker run -d --name service-ci-admin -p 9091:9090 \
-            -e SERVICE_ADMIN_ADDR=:9090 service:ci
+          docker run -d --name service-ci-admin --network service-ci -p 9091:9090 \
+            -e SERVICE_ADMIN_ADDR=:9090 -e SERVICE_DB_DSN -e SERVICE_AUTH_PUBLIC_ORIGIN service:ci
 
           ready=""
           for _ in $(seq 1 50); do
@@ -209,12 +242,13 @@ jobs:
       - name: Collect logs and remove the containers
         if: always()
         run: |
-          for name in service-ci service-ci-admin; do
+          for name in service-ci service-ci-admin service-ci-db; do
             if docker container inspect "$name" >/dev/null 2>&1; then
               docker logs "$name" || true
               docker rm -f "$name" >/dev/null || true
             fi
           done
+          docker network rm service-ci >/dev/null 2>&1 || true
 
   release-config:
     name: Release config

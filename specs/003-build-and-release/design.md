@@ -1,7 +1,7 @@
 ---
 feature: 003-build-and-release
 created: 2026-09-17
-updated: 2026-09-24
+updated: 2026-10-10
 ---
 
 # Design: Build and release
@@ -125,7 +125,8 @@ personal data is handled by the build or release tooling itself.
 - Integration level: `go tool mage build` run in CI is itself the integration check that
   the magefile, `go.mod` tool directive, and the module compile together correctly.
 - End-to-end level: `docker build` producing a runnable image, followed by starting a
-  container with no environment set and confirming the two listeners bind where
+  container with only its required environment set (a database connection string and a
+  public origin, with Postgres beside it) and confirming the two listeners bind where
   `AC-003.7` requires, is the end-to-end check for the container image.
 - CI workflow correctness is verified by inspecting job definitions and, where practical,
   by a local dry run of the same commands the workflow invokes.
