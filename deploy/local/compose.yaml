@@ -145,7 +145,7 @@ services:
     # image: jaegertracing/jaeger:2 does not resolve and the stack never
     # started. Confirmed against
     # https://hub.docker.com/v2/repositories/jaegertracing/jaeger/tags.
-    image: jaegertracing/jaeger:2.21.0
+    image: jaegertracing/jaeger:2.22.0
     networks:
       - stack
     ports:
